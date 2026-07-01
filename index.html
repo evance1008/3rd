@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <!-- スマホ縦画面ファースト。ピンチズームはglobe.gl側で扱うためuser-scalable=no -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>世界の国図鑑 - 3D地球儀</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <!-- 地球儀の描画先 -->
+  <div id="globe"></div>
+
+  <!-- 読み込み失敗時のフォールバック表示(エラーで白画面にしない) -->
+  <div id="error-message" hidden>
+    地球儀の読み込みに失敗しました。通信環境を確認して再読み込みしてください。
+  </div>
+
+  <footer id="attribution">
+    Globe texture: NASA Blue Marble /
+    Library: <a href="https://globe.gl/" target="_blank" rel="noopener">globe.gl</a>
+  </footer>
+
+  <!-- globe.gl をCDNから読み込み(ビルド不要) -->
+  <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
+  <script>
+    // フェーズ0: 空の地球儀を表示して自動回転させるだけの最小構成
+    try {
+      const container = document.getElementById('globe');
+
+      const globe = Globe()(container)
+        // 地球のテクスチャ(NASA Blue Marble。three-globeのサンプル画像CDN)
+        .globeImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg')
+        // 背景の星空
+        .backgroundImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
+        .width(window.innerWidth)
+        .height(window.innerHeight);
+
+      // ゆっくり自動回転させる(指でドラッグすると止まり、離すと再開)
+      globe.controls().autoRotate = true;
+      globe.controls().autoRotateSpeed = 0.5;
+
+      // 画面サイズが変わったら(スマホの回転など)地球儀もリサイズ
+      window.addEventListener('resize', () => {
+        globe.width(window.innerWidth).height(window.innerHeight);
+      });
+    } catch (err) {
+      console.error('地球儀の初期化に失敗しました:', err);
+      document.getElementById('error-message').hidden = false;
+    }
+  </script>
+</body>
+</html>
