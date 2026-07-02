@@ -11,43 +11,222 @@
   <!-- 地球儀の描画先 -->
   <div id="globe"></div>
 
+  <!-- フェーズ3で情報パネル(ボトムシート)に置き換えるダミー表示 -->
+  <div id="country-debug" hidden></div>
+
   <!-- 読み込み失敗時のフォールバック表示(エラーで白画面にしない) -->
   <div id="error-message" hidden>
     地球儀の読み込みに失敗しました。通信環境を確認して再読み込みしてください。
   </div>
 
   <footer id="attribution">
-    Globe texture: NASA Blue Marble /
+    Globe texture: NASA Blue Marble / Border data: Natural Earth /
     Library: <a href="https://globe.gl/" target="_blank" rel="noopener">globe.gl</a>
   </footer>
 
   <!-- globe.gl をCDNから読み込み(ビルド不要) -->
   <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.46.1/dist/globe.gl.min.js"></script>
   <script>
-    // フェーズ0: 空の地球儀を表示して自動回転させるだけの最小構成
-    try {
+    // フェーズ2: 193カ国すべてをタップ可能にする(ポリゴン165カ国 + ピン28カ国)
+    (function () {
+      // ドラッグ回転とタップ(国選択)を区別するための移動量しきい値(px)
+      const DRAG_THRESHOLD_PX = 5;
+
+      // 色設定(ハイライト・選択・通常)
+      const COLOR_HOVER = 'rgba(255, 210, 60, 0.75)';
+      const COLOR_SELECTED = 'rgba(255, 90, 90, 0.8)';
+      const COLOR_DEFAULT_CAP = 'rgba(200, 200, 200, 0.35)';
+      const COLOR_SIDE = 'rgba(80, 120, 200, 0.15)';
+      const COLOR_STROKE = '#222';
+      const COLOR_POINT_DEFAULT = '#ffa500';
+
+      // フェーズ3で使うグローバル状態: 選択中の国のcca3(未選択はnull)
+      window.selectedCountryCca3 = null;
+
+      // ホバー中のフィーチャー/ポイント(色の再計算に使う)
+      let hoveredPolygon = null;
+      let hoveredPointCca3 = null;
+
+      // ドラッグ判定用の状態
+      let pointerDownPos = null;
+      let isDragging = false;
+
       const container = document.getElementById('globe');
+      const debugEl = document.getElementById('country-debug');
 
-      const globe = Globe()(container)
-        // 地球のテクスチャ(NASA Blue Marble。three-globeのサンプル画像CDN)
-        .globeImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg')
-        // 背景の星空
-        .backgroundImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
-        .width(window.innerWidth)
-        .height(window.innerHeight);
+      /** 選択国のダミー表示を更新する(フェーズ3で本実装のボトムシートに置き換える) */
+      function showDebugPanel(country) {
+        if (!country) {
+          debugEl.hidden = true;
+          return;
+        }
+        debugEl.textContent = `${country.name.ja}(${country.cca3})`;
+        debugEl.hidden = false;
+      }
 
-      // ゆっくり自動回転させる(指でドラッグすると止まり、離すと再開)
-      globe.controls().autoRotate = true;
-      globe.controls().autoRotateSpeed = 0.5;
+      /** 国を選択状態にして表示を更新する共通処理 */
+      function selectCountry(cca3, countryByCca3) {
+        window.selectedCountryCca3 = cca3;
+        console.log('選択された国:', cca3);
+        showDebugPanel(countryByCca3.get(cca3) || null);
+      }
 
-      // 画面サイズが変わったら(スマホの回転など)地球儀もリサイズ
-      window.addEventListener('resize', () => {
-        globe.width(window.innerWidth).height(window.innerHeight);
-      });
-    } catch (err) {
-      console.error('地球儀の初期化に失敗しました:', err);
-      document.getElementById('error-message').hidden = false;
-    }
+      function main() {
+        Promise.all([
+          fetch('data/countries.json').then((res) => res.json()),
+          fetch('data/world-110m.geojson').then((res) => res.json()),
+        ])
+          .then(([countries, geoJson]) => initGlobe(countries, geoJson))
+          .catch((err) => {
+            console.error('データの読み込みに失敗しました:', err);
+            document.getElementById('error-message').hidden = false;
+          });
+      }
+
+      function initGlobe(countries, geoJson) {
+        const countryByCca3 = new Map(countries.map((c) => [c.cca3, c]));
+
+        // ポリゴンが無い国(小島嶼国・都市国家)はピン表示にフォールバック
+        const pointCountries = countries
+          .filter((c) => c.geoType === 'point' && Array.isArray(c.latlng))
+          .map((c) => ({
+            cca3: c.cca3,
+            name: c.name.ja,
+            lat: c.latlng[0],
+            lng: c.latlng[1],
+          }));
+
+        // 起動時の検証: 193カ国全てがポリゴンかピンいずれかでタップ可能か確認する
+        validateCoverage(countries, geoJson, pointCountries);
+
+        const globe = Globe()(container)
+          // 地球のテクスチャ(NASA Blue Marble)+ 地形の凹凸(bump map)
+          .globeImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-blue-marble.jpg')
+          .bumpImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-topology.png')
+          .backgroundImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
+          .width(window.innerWidth)
+          .height(window.innerHeight)
+          // 国境ポリゴン(165カ国)
+          .polygonsData(geoJson.features)
+          .polygonAltitude(0.006)
+          .polygonSideColor(() => COLOR_SIDE)
+          .polygonStrokeColor(() => COLOR_STROKE)
+          .polygonLabel((d) => `<div>${d.properties.name}</div>`)
+          .polygonsTransitionDuration(200)
+          // ポリゴンが無い28カ国のピン表示
+          .pointsData(pointCountries)
+          .pointLat('lat')
+          .pointLng('lng')
+          .pointAltitude(0.01)
+          .pointRadius(0.4)
+          .pointLabel((d) => `<div>${d.name}</div>`)
+          // pointsMergeが無効(false)の場合のみポイント個別のonPointClickが動作する
+          .pointsMerge(false);
+
+        // ハイライト・選択色を反映する(公式exampleと同様、ホバー時にアクセサを再設定する方式)
+        function refreshColors() {
+          globe
+            .polygonCapColor((d) => {
+              if (d === hoveredPolygon) return COLOR_HOVER;
+              if (d.properties.cca3 === window.selectedCountryCca3) return COLOR_SELECTED;
+              return COLOR_DEFAULT_CAP;
+            })
+            .pointColor((d) => {
+              if (d.cca3 === hoveredPointCca3) return COLOR_HOVER;
+              if (d.cca3 === window.selectedCountryCca3) return COLOR_SELECTED;
+              return COLOR_POINT_DEFAULT;
+            });
+        }
+        refreshColors();
+
+        globe
+          .onPolygonHover((d) => {
+            hoveredPolygon = d;
+            refreshColors();
+          })
+          .onPointHover((d) => {
+            hoveredPointCca3 = d ? d.cca3 : null;
+            refreshColors();
+          })
+          .onPolygonClick((polygon, event, { lat, lng, altitude }) => {
+            // ドラッグ回転の終わりに発生するクリックは無視する(タップのみ処理)
+            if (isDragging) return;
+            const cca3 = polygon.properties.cca3;
+            console.log('国タップ(ポリゴン):', cca3, { lat, lng, altitude });
+            selectCountry(cca3, countryByCca3);
+            refreshColors();
+          })
+          .onPointClick((point, event, { lat, lng, altitude }) => {
+            if (isDragging) return;
+            console.log('国タップ(ピン):', point.cca3, { lat, lng, altitude });
+            selectCountry(point.cca3, countryByCca3);
+            refreshColors();
+          });
+
+        // 自動回転(ドラッグ中は一時停止し、離すと再開する)
+        const controls = globe.controls();
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5;
+        controls.addEventListener('start', () => {
+          controls.autoRotate = false;
+        });
+        controls.addEventListener('end', () => {
+          controls.autoRotate = true;
+        });
+
+        // タップとドラッグ回転を区別するための独自判定(pointerdown→pointerupの移動量で判定)
+        container.addEventListener('pointerdown', (e) => {
+          pointerDownPos = { x: e.clientX, y: e.clientY };
+          isDragging = false;
+        }, { passive: true });
+
+        container.addEventListener('pointermove', (e) => {
+          if (!pointerDownPos) return;
+          const dx = e.clientX - pointerDownPos.x;
+          const dy = e.clientY - pointerDownPos.y;
+          if (Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD_PX) {
+            isDragging = true;
+          }
+        }, { passive: true });
+
+        container.addEventListener('pointerup', () => {
+          pointerDownPos = null;
+        }, { passive: true });
+
+        // 画面サイズが変わったら(スマホの回転など)地球儀もリサイズ
+        window.addEventListener('resize', () => {
+          globe.width(window.innerWidth).height(window.innerHeight);
+        });
+      }
+
+      /** 193カ国全てがポリゴンかピンいずれかでタップ可能かを検証し、結果をログ出力する */
+      function validateCoverage(countries, geoJson, pointCountries) {
+        const polygonCca3Set = new Set(geoJson.features.map((f) => f.properties.cca3));
+        const pointCca3Set = new Set(pointCountries.map((c) => c.cca3));
+
+        console.log(
+          `カバレッジ検証: ポリゴン表示 ${polygonCca3Set.size}カ国 + ピン表示 ${pointCca3Set.size}カ国 `
+          + `= 計 ${polygonCca3Set.size + pointCca3Set.size}カ国(countries.json: ${countries.length}カ国)`
+        );
+
+        const missing = countries.filter(
+          (c) => !polygonCca3Set.has(c.cca3) && !pointCca3Set.has(c.cca3)
+        );
+        if (missing.length > 0) {
+          console.warn(
+            'タップ不可能な国があります:',
+            missing.map((c) => `${c.cca3}(${c.name.ja})`)
+          );
+        }
+      }
+
+      try {
+        main();
+      } catch (err) {
+        console.error('地球儀の初期化に失敗しました:', err);
+        document.getElementById('error-message').hidden = false;
+      }
+    })();
   </script>
 </body>
 </html>
