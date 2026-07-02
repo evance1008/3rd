@@ -38,6 +38,62 @@ GitHub Pagesで公開し、スマホ(iPhone Safari)での利用がメイン。
 - Wikipedia / Wikimedia / Natural Earth の出典・ライセンス表記をフッターに入れる
 - ビルド工程なし(`index.html` を直接開ける構成。データ生成のみNodeスクリプト)
 
+## data/countries.json のスキーマ(フェーズ1で確定)
+
+`scripts/build-data.js` が生成する `data/countries.json` は、国連加盟国193カ国分の
+配列(`cca3` 昇順)。各要素のスキーマは以下のとおり。
+
+```jsonc
+{
+  "cca2": "JP",                 // ISO 3166-1 alpha-2
+  "cca3": "JPN",                // ISO 3166-1 alpha-3(主キー。GeoJSONとの紐付けに使用)
+  "name": {
+    "common": "Japan",          // 英語名(common)
+    "official": "Japan",        // 英語名(official)
+    "ja": "日本"                 // 日本語名(translations.jpn.common 由来。表示に使用)
+  },
+  "capital": "Tokyo",            // 首都(先頭の1件。無い国はnull)
+  "population": 126529100,       // 人口
+  "area": 377930,                // 面積(km2)
+  "languages": [{ "code": "jpn", "name": "Japanese" }], // 公用語(複数可)
+  "currencies": [{ "code": "JPY", "name": "Japanese yen", "symbol": "¥" }],
+  "flagImageUrl": "https://.../jp.svg", // 国旗画像URL(HTTPステータス確認済み。無効ならnull)
+  "latlng": [36, 138],           // 代表座標(geoType:"point"の場合の表示に使用)
+  "geoType": "polygon",          // "polygon"(GeoJSONに国境ポリゴンあり) | "point"(緯度経度のみ)
+  "anthem": { "audioUrl": null },              // 国歌音源URL。取得不可はnull(項目非表示)
+  "touristSpot": {                              // 代表的な観光地。取得不可はnull
+    "name": "富士山",                            // 観光地名(LLM選定、日本語)
+    "imageUrl": null,                            // Wikipediaサムネイル画像URL。取得不可はnull
+    "wikipediaUrl": null                         // 日本語版Wikipedia記事URL。取得不可はnull
+  },
+  "cuisine": { "name": "寿司", "note": "酢飯と魚介を組み合わせた代表的な料理" },
+  "greeting": { "native": "こんにちは", "katakana": "コンニチハ", "bcp47": "ja-JP" }
+}
+```
+
+国境ポリゴンは `data/world-110m.geojson` に別ファイルとして保存する
+(`FeatureCollection`。各Featureの `properties` は `{ cca3, name }` のみに削減済み)。
+193カ国のうち110m解像度でポリゴンが存在しない28カ国(小島嶼国・都市国家)は
+`geoType: "point"` となり、`latlng` を使った代替表示が必要(フェーズ2で対応)。
+
+### データソースに関する注記
+
+CLAUDE.md本文の技術構成では REST Countries API / Wikidata SPARQL / Wikipedia REST API /
+Wikimedia Commons を直接使う設計としているが、これらのホストにアクセスできない
+ネットワーク環境(例: 一部のサンドボックス実行環境)では `raw.githubusercontent.com`
+経由のミラーデータで代替する設計にしている(`scripts/build-data.js` 内の
+`USE_REST_COUNTRIES_API` を `true` にすると本来のAPI直叩きに切り替え可能)。
+
+- 基本情報・人口: [mledoze/countries](https://github.com/mledoze/countries)
+  (REST Countriesの一次データ源) + [samayo/country-json](https://github.com/samayo/country-json)
+  (人口データ。**出典データが2018年前後のスナップショットで最新ではない**。
+  到達可能な環境では REST Countries API に切り替えて再取得することを推奨)
+- 国旗画像: [hjnilsson/country-flags](https://github.com/hjnilsson/country-flags)(SVG)
+- 国境ポリゴン: Natural Earth 110m(`nvkelso/natural-earth-vector` 経由。変更なし)
+- 国歌音源・観光地画像は Wikidata / Wikipedia への到達性に依存するため、
+  遮断環境で実行した場合は該当フィールドが `null` のままになる
+  (UIは項目非表示のフォールバックで対応済みの前提)
+
 ## ディレクトリ構成
 
 ```
@@ -45,8 +101,13 @@ GitHub Pagesで公開し、スマホ(iPhone Safari)での利用がメイン。
 ├── index.html        # アプリ本体(エントリポイント)
 ├── assets/           # CSS・アイコンなど静的ファイル
 │   └── style.css
-├── data/             # 事前生成データ(countries.json、GeoJSONなど)
-├── scripts/          # データ生成用Nodeスクリプト(build-data.js)
+├── data/             # 事前生成データ(countries.json、world-110m.geojson)
+├── scripts/          # データ生成用Nodeスクリプト
+│   ├── build-data.js     # data/countries.json・data/world-110m.geojson を生成
+│   ├── validate-data.js  # 生成データの検証(件数・必須項目充足率)
+│   └── data/              # 料理・挨拶・観光地の手作業データ(cca3キー)
+│       ├── cuisine-greetings.js
+│       └── tourist-spots.js
 └── CLAUDE.md         # このファイル
 ```
 
@@ -76,6 +137,14 @@ npx serve .
 
 → http://localhost:8000 を開く。
 スマホ確認は Safari の開発者ツール、または同一Wi-Fi内から `http://<PCのIP>:8000` にアクセス。
+
+データ生成(`data/countries.json` / `data/world-110m.geojson` の再生成)は
+依存パッケージのインストール不要(Node.js標準の `fetch` のみ使用):
+
+```bash
+node scripts/build-data.js
+node scripts/validate-data.js
+```
 
 ## コーディング方針
 
