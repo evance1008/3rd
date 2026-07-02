@@ -11,12 +11,43 @@
   <!-- 地球儀の描画先 -->
   <div id="globe"></div>
 
-  <!-- フェーズ3で情報パネル(ボトムシート)に置き換えるダミー表示 -->
-  <div id="country-debug" hidden></div>
-
   <!-- 読み込み失敗時のフォールバック表示(エラーで白画面にしない) -->
   <div id="error-message" hidden>
     地球儀の読み込みに失敗しました。通信環境を確認して再読み込みしてください。
+  </div>
+
+  <!-- フェーズ3: 選択した国の基本情報を表示するボトムシート -->
+  <div id="info-panel" class="info-panel" aria-hidden="true">
+    <div id="info-panel-handle" class="info-panel__handle" aria-hidden="true"></div>
+    <button id="info-panel-close" class="info-panel__close" type="button" aria-label="閉じる">×</button>
+    <div class="info-panel__content">
+      <div class="info-panel__flag">
+        <img id="info-flag-img" alt="">
+        <span id="info-flag-emoji" class="info-panel__flag-emoji" hidden></span>
+      </div>
+      <h2 id="info-name-ja" class="info-panel__name-ja"></h2>
+      <p id="info-name-en" class="info-panel__name-en"></p>
+
+      <dl class="info-panel__facts">
+        <div id="info-row-capital" class="info-panel__row" hidden>
+          <dt>首都</dt><dd id="info-capital"></dd>
+        </div>
+        <div id="info-row-population" class="info-panel__row" hidden>
+          <dt>人口</dt><dd id="info-population"></dd>
+        </div>
+        <div id="info-row-area" class="info-panel__row" hidden>
+          <dt>面積</dt><dd id="info-area"></dd>
+        </div>
+        <div id="info-row-languages" class="info-panel__row info-panel__row--block" hidden>
+          <dt>公用語</dt>
+          <dd><div id="info-languages" class="chip-list"></div></dd>
+        </div>
+        <div id="info-row-currencies" class="info-panel__row info-panel__row--block" hidden>
+          <dt>通貨</dt><dd id="info-currencies"></dd>
+        </div>
+      </dl>
+      <!-- フェーズ4引き継ぎ: ここ(facts末尾)に料理・挨拶、フェーズ5で国歌・観光地を追加する想定 -->
+    </div>
   </div>
 
   <footer id="attribution">
@@ -52,24 +83,163 @@
       let isDragging = false;
 
       const container = document.getElementById('globe');
-      const debugEl = document.getElementById('country-debug');
 
-      /** 選択国のダミー表示を更新する(フェーズ3で本実装のボトムシートに置き換える) */
-      function showDebugPanel(country) {
-        if (!country) {
-          debugEl.hidden = true;
-          return;
-        }
-        debugEl.textContent = `${country.name.ja}(${country.cca3})`;
-        debugEl.hidden = false;
+      // initGlobe内で定義される色再計算関数への参照(閉じる操作から呼べるようにする)
+      let refreshColorsRef = null;
+
+      // ---- フェーズ3: 情報パネル(ボトムシート) ----
+      const panelEl = document.getElementById('info-panel');
+      const panelHandleEl = document.getElementById('info-panel-handle');
+      const panelCloseBtn = document.getElementById('info-panel-close');
+      const flagImgEl = document.getElementById('info-flag-img');
+      const flagEmojiEl = document.getElementById('info-flag-emoji');
+      const nameJaEl = document.getElementById('info-name-ja');
+      const nameEnEl = document.getElementById('info-name-en');
+      const rowCapitalEl = document.getElementById('info-row-capital');
+      const capitalEl = document.getElementById('info-capital');
+      const rowPopulationEl = document.getElementById('info-row-population');
+      const populationEl = document.getElementById('info-population');
+      const rowAreaEl = document.getElementById('info-row-area');
+      const areaEl = document.getElementById('info-area');
+      const rowLanguagesEl = document.getElementById('info-row-languages');
+      const languagesEl = document.getElementById('info-languages');
+      const rowCurrenciesEl = document.getElementById('info-row-currencies');
+      const currenciesEl = document.getElementById('info-currencies');
+
+      const numberFormatter = new Intl.NumberFormat('ja-JP');
+
+      /** ISO 3166-1 alpha-2 コードから国旗絵文字を作る(画像読み込み失敗時のフォールバック) */
+      function cca2ToFlagEmoji(cca2) {
+        if (!cca2 || cca2.length !== 2) return '🏳️';
+        const codePoints = cca2.toUpperCase().split('').map((ch) => 127397 + ch.charCodeAt(0));
+        return String.fromCodePoint(...codePoints);
       }
 
-      /** 国を選択状態にして表示を更新する共通処理 */
+      /** 値があれば行を表示してテキストを設定し、無ければ行ごと隠す(レイアウトを崩さない) */
+      function setRow(rowEl, valueEl, value) {
+        if (value === null || value === undefined || value === '') {
+          rowEl.hidden = true;
+          return;
+        }
+        valueEl.textContent = value;
+        rowEl.hidden = false;
+      }
+
+      /** 選択国の情報をパネルに描画する */
+      function renderPanel(country) {
+        // 国旗: flagcdnを直接使用し、読み込み失敗時は絵文字にフォールバックする
+        flagImgEl.hidden = false;
+        flagEmojiEl.hidden = true;
+        flagImgEl.onerror = () => {
+          flagImgEl.hidden = true;
+          flagEmojiEl.hidden = false;
+          flagEmojiEl.textContent = cca2ToFlagEmoji(country.cca2);
+        };
+        if (country.cca2) {
+          flagImgEl.alt = `${country.name.ja || country.cca3}の国旗`;
+          flagImgEl.src = `https://flagcdn.com/${country.cca2.toLowerCase()}.svg`;
+        } else {
+          flagImgEl.onerror();
+        }
+
+        nameJaEl.textContent = (country.name && country.name.ja) || '(国名不明)';
+        nameEnEl.textContent = (country.name && country.name.common) || '';
+
+        setRow(rowCapitalEl, capitalEl, country.capital);
+        setRow(
+          rowPopulationEl,
+          populationEl,
+          typeof country.population === 'number' ? `${numberFormatter.format(country.population)}人` : null
+        );
+        setRow(
+          rowAreaEl,
+          areaEl,
+          typeof country.area === 'number' ? `${numberFormatter.format(country.area)}km²` : null
+        );
+
+        // 公用語(チップ形式、件数上限なし)
+        if (Array.isArray(country.languages) && country.languages.length > 0) {
+          languagesEl.innerHTML = '';
+          country.languages.forEach((lang) => {
+            const chip = document.createElement('span');
+            chip.className = 'chip';
+            chip.textContent = lang.name;
+            languagesEl.appendChild(chip);
+          });
+          rowLanguagesEl.hidden = false;
+        } else {
+          rowLanguagesEl.hidden = true;
+        }
+
+        // 通貨(複数ある場合は「、」区切りで全て表示。コード・名称・記号を併記)
+        if (Array.isArray(country.currencies) && country.currencies.length > 0) {
+          const text = country.currencies
+            .map((cur) => {
+              const label = [cur.code, cur.name].filter(Boolean).join(' ');
+              return cur.symbol ? `${label} (${cur.symbol})` : label;
+            })
+            .filter(Boolean)
+            .join('、');
+          setRow(rowCurrenciesEl, currenciesEl, text || null);
+        } else {
+          rowCurrenciesEl.hidden = true;
+        }
+      }
+
+      function openPanel(country) {
+        renderPanel(country);
+        panelEl.classList.add('open');
+        panelEl.setAttribute('aria-hidden', 'false');
+      }
+
+      function closePanel() {
+        panelEl.classList.remove('open');
+        panelEl.setAttribute('aria-hidden', 'true');
+        window.selectedCountryCca3 = null;
+        if (typeof refreshColorsRef === 'function') refreshColorsRef();
+      }
+
+      /** 国を選択状態にして情報パネルを開く共通処理 */
       function selectCountry(cca3, countryByCca3) {
         window.selectedCountryCca3 = cca3;
         console.log('選択された国:', cca3);
-        showDebugPanel(countryByCca3.get(cca3) || null);
+        // countries.jsonにレコードが無い場合も、cca3だけのフォールバック情報でパネルを開く
+        const country = countryByCca3.get(cca3) || { cca3, cca2: null, name: { ja: null, common: null } };
+        openPanel(country);
       }
+
+      // 閉じるボタン
+      panelCloseBtn.addEventListener('click', closePanel);
+
+      // ハンドルの下スワイプで閉じる(コンテンツのスクロールと干渉しないようハンドル領域のみで判定)
+      (function setupSwipeToClose() {
+        const SWIPE_CLOSE_THRESHOLD_PX = 80;
+        let startY = null;
+
+        function onPointerMove(e) {
+          if (startY === null) return;
+          const dy = Math.max(0, e.clientY - startY);
+          panelEl.style.transition = 'none';
+          panelEl.style.transform = `translateY(${dy}px)`;
+        }
+
+        function onPointerUp(e) {
+          if (startY === null) return;
+          const dy = e.clientY - startY;
+          panelEl.style.transition = '';
+          panelEl.style.transform = '';
+          startY = null;
+          window.removeEventListener('pointermove', onPointerMove);
+          window.removeEventListener('pointerup', onPointerUp);
+          if (dy > SWIPE_CLOSE_THRESHOLD_PX) closePanel();
+        }
+
+        panelHandleEl.addEventListener('pointerdown', (e) => {
+          startY = e.clientY;
+          window.addEventListener('pointermove', onPointerMove);
+          window.addEventListener('pointerup', onPointerUp);
+        });
+      })();
 
       function main() {
         Promise.all([
@@ -138,6 +308,7 @@
             });
         }
         refreshColors();
+        refreshColorsRef = refreshColors;
 
         globe
           .onPolygonHover((d) => {
@@ -161,6 +332,11 @@
             console.log('国タップ(ピン):', point.cca3, { lat, lng, altitude });
             selectCountry(point.cca3, countryByCca3);
             refreshColors();
+          })
+          // ポリゴン・ピンの無い地球儀の背景(海など)をタップした場合はパネルを閉じる
+          .onGlobeClick(() => {
+            if (isDragging) return;
+            closePanel();
           });
 
         // 自動回転(ドラッグ中は一時停止し、離すと再開する)
