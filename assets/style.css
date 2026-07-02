@@ -51,17 +51,149 @@ body {
   pointer-events: auto;
 }
 
-/* フェーズ2の暫定表示: 選択した国を確認するためのダミーパネル(フェーズ3で置き換え) */
-#country-debug {
+/* フェーズ3: 情報パネル(ボトムシート) */
+.info-panel {
   position: fixed;
-  top: calc(8px + env(safe-area-inset-top));
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 6px 14px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  font-size: 14px;
-  white-space: nowrap;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  height: 65vh;
+  max-height: 70vh;
+  min-height: 50vh;
+  display: flex;
+  flex-direction: column;
+  background: #fdfaf3;
+  color: #222;
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.35);
+  /* transform/transitionでアニメーションさせる(position/topは使わない=60fps対策) */
+  transform: translateY(105%);
+  transition: transform 0.3s ease-out;
+  will-change: transform;
   pointer-events: none;
+  touch-action: none;
+}
+
+.info-panel.open {
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.info-panel__handle {
+  flex: none;
+  width: 40px;
+  height: 4px;
+  margin: 10px auto 4px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.25);
+  touch-action: none;
+}
+
+.info-panel__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.08);
+  color: #333;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.info-panel__content {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  padding: 4px 20px calc(20px + env(safe-area-inset-bottom));
+}
+
+.info-panel__flag {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 56px;
+  margin: 8px 0 12px;
+}
+
+.info-panel__flag img {
+  width: 72px;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.info-panel__flag-emoji {
+  font-size: 56px;
+  line-height: 1;
+}
+
+.info-panel__name-ja {
+  margin: 0;
+  text-align: center;
+  font-size: 22px;
+}
+
+.info-panel__name-en {
+  margin: 2px 0 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #777;
+}
+
+.info-panel__facts {
+  margin: 0;
+}
+
+.info-panel__row {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* hidden属性はUAスタイルとの詳細度が同点のため、後勝ちさせるために明示しておく */
+.info-panel__row[hidden] {
+  display: none;
+}
+
+.info-panel__row dt {
+  flex: 0 0 5em;
+  color: #666;
+  font-size: 13px;
+}
+
+.info-panel__row dd {
+  margin: 0;
+  flex: 1;
+  font-size: 14px;
+}
+
+.info-panel__row--block {
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* --blockは縦積みのため、dtの横幅指定(flex-basis)がそのまま高さに化けるのを防ぐ */
+.info-panel__row--block dt {
+  flex: none;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 12px;
+  white-space: nowrap;
 }
